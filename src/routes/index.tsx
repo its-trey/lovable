@@ -26,7 +26,7 @@ function Page() {
 
 function MusicPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [muted, setMuted] = useState(false); // Play unmuted by default
+  const [muted, setMuted] = useState(false); // Play unmuted by default in UI
   const [started, setStarted] = useState(false);
 
   useEffect(() => {
@@ -34,46 +34,82 @@ function MusicPlayer() {
     if (!audio) return;
     audio.volume = 0.5;
     audio.loop = true;
-    audio.muted = false;
+
+    // Always start playing muted to bypass browser autoplay policies
+    audio.muted = true;
+
+    let unmuteHandler: (() => void) | null = null;
+    let playHandler: (() => void) | null = null;
+
+    const cleanup = () => {
+      if (unmuteHandler) {
+        document.removeEventListener("click", unmuteHandler);
+        document.removeEventListener("touchstart", unmuteHandler);
+      }
+      if (playHandler) {
+        document.removeEventListener("click", playHandler);
+        document.removeEventListener("touchstart", playHandler);
+      }
+    };
 
     const playAudio = () => {
       audio.play()
         .then(() => {
           setStarted(true);
+          // Try to unmute immediately if browser allows
+          audio.muted = false;
+
+          if (audio.paused) {
+            // If it paused after unmuting, mute it back and wait for user click
+            audio.muted = true;
+            audio.play().catch(() => { });
+            setupUnmuteListeners();
+          }
         })
         .catch(() => {
-          // Autoplay blocked: wait for first interaction anywhere on page to play with sound
-          const startPlay = () => {
-            audio.play().then(() => {
-              setStarted(true);
-              document.removeEventListener("click", startPlay);
-              document.removeEventListener("touchstart", startPlay);
-            }).catch(() => {});
-          };
-          document.addEventListener("click", startPlay);
-          document.addEventListener("touchstart", startPlay);
+          // If even muted autoplay fails, wait for click to play and unmute
+          setupPlayListeners();
         });
+    };
+
+    const setupUnmuteListeners = () => {
+      unmuteHandler = () => {
+        audio.muted = false;
+        cleanup();
+      };
+      document.addEventListener("click", unmuteHandler);
+      document.addEventListener("touchstart", unmuteHandler);
+    };
+
+    const setupPlayListeners = () => {
+      playHandler = () => {
+        audio.muted = false;
+        audio.play().then(() => {
+          setStarted(true);
+        }).catch(() => { });
+        cleanup();
+      };
+      document.addEventListener("click", playHandler);
+      document.addEventListener("touchstart", playHandler);
     };
 
     playAudio();
 
     return () => {
-      // Clean up event listeners on unmount
-      document.removeEventListener("click", () => {});
-      document.removeEventListener("touchstart", () => {});
+      cleanup();
     };
   }, []);
 
-  const toggle = () => {
+  const toggle = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Stop bubbling to document so autoplay listeners aren't overridden
     const audio = audioRef.current;
     if (!audio) return;
     const next = !muted;
     setMuted(next);
     audio.muted = next;
-    
-    // If unmuting and paused, attempt to play
+
     if (!next && audio.paused) {
-      audio.play().then(() => setStarted(true)).catch(() => {});
+      audio.play().then(() => setStarted(true)).catch(() => { });
     }
   };
 
@@ -723,9 +759,9 @@ function MemoryItem({ memory, index }: { memory: Memory; index: number }) {
         <div className="relative mx-auto w-full max-w-sm aspect-[4/5] rounded-2xl bg-white shadow-2xl border-[10px] border-white overflow-hidden flex flex-col justify-between pb-6">
           <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-20 h-5 bg-[oklch(0.78_0.08_60)]/70 rounded-sm rotate-[-3deg] z-20" />
           <div className="w-full aspect-[4/4.2] overflow-hidden rounded-lg bg-gray-100">
-            <img 
-              src={memory.image} 
-              alt={memory.title} 
+            <img
+              src={memory.image}
+              alt={memory.title}
               className="w-full h-full object-cover"
             />
           </div>
